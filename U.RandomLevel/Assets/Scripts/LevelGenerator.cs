@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public class LevelGenerator : MonoBehaviour
@@ -10,9 +11,9 @@ public class LevelGenerator : MonoBehaviour
 	public int numRooms;
 	private readonly List<RoomPositions> _roomCoordinates = new();
 	private readonly List<Vector3> _spawnCoordinates = new();
+	private int[,] _data;
 
 	private MazeDataGenerator _dataGenerator;
-	private int[,] _data;
 	private int _maxX;
 	private int _maxZ;
 
@@ -22,12 +23,11 @@ public class LevelGenerator : MonoBehaviour
 	private void Awake() => _dataGenerator = new MazeDataGenerator();
 	private void Start()
 	{
-		//spawn spawn room
-		//var spawnRoom = Instantiate(rooms[0], Vector3.zero, Quaternion.identity);
 		// add (0, 0) to room coordinates
 		var spawn = new RoomPositions(Vector3.zero, 0);
+		spawn.Visited = true;
 		_roomCoordinates.Add(spawn);
-		//for loop
+
 		for (var i = 0; i < numRooms; i++)
 		{
 			//add spawn coordinates based on room coordinates
@@ -39,9 +39,6 @@ public class LevelGenerator : MonoBehaviour
 			var roomLocation = _spawnCoordinates[Random.Range(0, _spawnCoordinates.Count)];
 			//pick room randomly
 			var room = Random.Range(1, rooms.Length);
-			//spawn that room in the correct position based on coordinates and length/width
-
-			//spawnRoom = Instantiate(room, new Vector3(roomLocation.x * roomLength, roomLocation.y, roomLocation.z * roomWidth), Quaternion.identity);
 
 			//remove picked coord from spawn coordinates
 			bool isFound;
@@ -54,11 +51,12 @@ public class LevelGenerator : MonoBehaviour
 			var roomPos = new RoomPositions(roomLocation, room);
 			_roomCoordinates.Add(roomPos);
 		}
+		_roomCoordinates.Sort((x, y) =>
+			(Mathf.Abs(x.RoomCoord.x) + Mathf.Abs(x.RoomCoord.z)).CompareTo(Mathf.Abs(y.RoomCoord.x) +
+																			Mathf.Abs(y.RoomCoord.z)));
 		FindArraySize();
 		MakeRoomArray();
-
-		_data = _dataGenerator.FromDimensions(_data);
-		AddPerimeter();
+		ConnectRooms();
 		InstantiateRooms();
 	}
 
@@ -76,7 +74,7 @@ public class LevelGenerator : MonoBehaviour
 		{
 			for (var j = 0; j <= cMax; j++)
 			{
-				if (maze[i, j] != -1)
+				if (maze[i, j] != 0)
 					message += "....";
 				else
 					message += "==";
@@ -87,6 +85,84 @@ public class LevelGenerator : MonoBehaviour
 
 		GUI.Label(new Rect(20, 20, 500, 500), message);
 
+	}
+
+	private void ConnectRooms()
+	{
+		foreach (var r in _roomCoordinates.Where(r => !r.Visited))
+		{
+			// Calculate the position of the room in the Room Array
+			VisitRooms(r);
+		}
+	}
+
+	private void VisitRooms(RoomPositions r)
+	{
+		// Make an empty list of visited rooms to be filled each iteration.
+		var visitedRooms = new List<RoomPositions>();
+		visitedRooms.Add(r);
+
+		var row = 2 * ((int)r.RoomCoord.z - _minZ) + 1;
+		var col = 2 * ((int)r.RoomCoord.x - _minX) + 1;
+
+		var isVisited = false;
+		var nextSpots = new List<Vector2>{ Vector2.left, Vector2.right, Vector2.up, Vector2.down };
+		var nextSpotsCopy = nextSpots;
+		while (!isVisited)
+		{
+			var isInBounds = false;
+			while (!isInBounds)
+			{
+				var nextSpot = 2 * nextSpotsCopy[Random.Range(0, nextSpots.Count)];
+				if (row + (int)nextSpot.x < 0 || row + (int)nextSpot.x > _data.GetUpperBound(0))
+				{
+					nextSpotsCopy.Remove(nextSpot);
+					continue;
+				}
+
+				if (col + (int)nextSpot.y < 0 || col + (int)nextSpot.y > _data.GetUpperBound(1))
+				{
+					nextSpotsCopy.Remove(nextSpot);
+					continue;
+				}
+				// TODO: AM I EVER ACTUALLY MOVING AROUND???
+				var nextRow = row + (int)nextSpot.x;
+				var nextCol = col + (int)nextSpot.y;
+				// If we found a room.
+				if (_data[nextRow, nextCol] != 0)
+				{
+					// Open Door
+					_data[row + (int)nextSpot.x / 2, col + (int)nextSpot.y / 2] = -1;
+					var room = ConvertToRoom(nextRow, nextCol);
+					if (room.Visited)
+						isVisited = true;
+					if (visitedRooms.Find(x => x.RoomCoord == room.RoomCoord) == null) visitedRooms.Add(room);
+					isInBounds = true;
+				}
+			}
+		}
+		foreach (var v in visitedRooms)
+		{
+			v.Visited = true;
+		}
+	}
+
+	private RoomPositions ConvertToRoom(int row, int col)
+	{
+		var xPos = (float)((col - 1) / 2 + _minX);
+		var zPos = (float)((row - 1) / 2 + _minZ);
+		var pos = new Vector3(xPos, 0f, zPos);
+
+		var room = _roomCoordinates.Find(x => x.RoomCoord == pos);
+		return room;
+	}
+
+	private void PrintArray()
+	{
+		foreach (var t in _roomCoordinates)
+		{
+			Debug.Log(t.RoomCoord + "\n");
+		}
 	}
 
 	private void AddNewSpawnCoords(int room, Vector2 mod)
@@ -103,7 +179,6 @@ public class LevelGenerator : MonoBehaviour
 	}
 	private void FindArraySize()
 	{
-
 		foreach (var t in _roomCoordinates)
 		{
 			if (t.RoomCoord.x < _minX)
@@ -120,104 +195,11 @@ public class LevelGenerator : MonoBehaviour
 	private void MakeRoomArray()
 	{
 		_data = new int[2 * (_maxZ - _minZ + 1) + 1, 2 * (_maxX - _minX + 1) + 1];
-		//data = new int[2 * (maxX - minX + 1) + 1, 2 * (maxZ - minZ + 1) + 1];
 		for (var i = 0; i < _roomCoordinates.Count; i++)
 		{
 			var x = 2 * ((int)_roomCoordinates[i].RoomCoord.x - _minX) + 1;
 			var z = 2 * ((int)_roomCoordinates[i].RoomCoord.z - _minZ) + 1;
 			_data[z, x] = _roomCoordinates[i].RoomID + 1;
-			//data [x, z] = _roomCoordinates [i].RoomID + 1;
-		}
-	}
-
-	private void AddPerimeter()
-	{
-		for (var i = 0; i <= _data.GetUpperBound(0); i++)
-		{
-			for (var j = 0; j <= _data.GetUpperBound(1); j++)
-			{
-				// If the value is already a room, it can't be a wall
-				if (_data[i, j] > 0)
-					continue;
-				if (i == 0)
-				{
-					if (_data[i + 1, j] > 0)
-					{
-						_data[i, j] = -1;
-						continue;
-					}
-					if (j != _data.GetUpperBound(1) && _data[i + 1, j + 1] > 0)
-					{
-						_data[i, j] = -1;
-						continue;
-					}
-					if (j != 0 && _data[i + 1, j - 1] > 0)
-						_data[i, j] = -1;
-				}
-				else if (i == _data.GetUpperBound(0))
-				{
-					if (_data[i - 1, j] > 0)
-					{
-						_data[i, j] = -1;
-						continue;
-					}
-					if (j != _data.GetUpperBound(1) && _data[i - 1, j + 1] > 0)
-					{
-						_data[i, j] = -1;
-						continue;
-					}
-					if (j != 0 && _data[i - 1, j - 1] > 0)
-						_data[i, j] = -1;
-				}
-				else if (j == 0)
-				{
-					if (_data[i, j + 1] > 0)
-					{
-						_data[i, j] = -1;
-						continue;
-					}
-					if (_data[i - 1, j + 1] > 0)
-					{
-						_data[i, j] = -1;
-						continue;
-					}
-					if (_data[i + 1, j + 1] > 0) _data[i, j] = -1;
-				}
-				else if (j == _data.GetUpperBound(1))
-				{
-					if (_data[i, j - 1] > 0)
-					{
-						_data[i, j] = -1;
-						continue;
-					}
-					if (_data[i - 1, j - 1] > 0)
-					{
-						_data[i, j] = -1;
-						continue;
-					}
-					if (_data[i + 1, j - 1] > 0) _data[i, j] = -1;
-				}
-				else
-				{
-					var n = _data[i + 1, j] > 0;
-					var ne = _data[i + 1, j + 1] > 0;
-					var e = _data[i, j + 1] > 0;
-					var se = _data[i - 1, j + 1] > 0;
-					var s = _data[i - 1, j] > 0;
-					var sw = _data[i - 1, j - 1] > 0;
-					var w = _data[i, j - 1] > 0;
-					var nw = _data[i + 1, j - 1] > 0;
-
-					if (n != s)
-						_data[i, j] = -1;
-					if (w != e)
-						_data[i, j] = -1;
-					if (ne != sw)
-						_data[i, j] = -1;
-					if (nw != se)
-						_data[i, j] = -1;
-				}
-			}
 		}
 	}
 
@@ -239,10 +221,11 @@ public class LevelGenerator : MonoBehaviour
 
 	private void OpenDoors(GameObject room, int i, int j)
 	{
-		var n = _data[i + 1, j] == 0;
-		var e = _data[i, j + 1] == 0;
-		var s = _data[i - 1, j] == 0;
-		var w = _data[i, j - 1] == 0;
+		// Changed "open" areas to be -1, and walls are 0
+		var n = _data[i + 1, j] == -1;
+		var e = _data[i, j + 1] == -1;
+		var s = _data[i - 1, j] == -1;
+		var w = _data[i, j - 1] == -1;
 		var doors = room.GetComponent<Room>();
 		if (n) doors.doorsNESW[0].gameObject.SetActive(false);
 		if (e) doors.doorsNESW[1].gameObject.SetActive(false);
@@ -255,10 +238,12 @@ public class RoomPositions
 {
 	public Vector3 RoomCoord;
 	public int RoomID;
+	public bool Visited;
 
 	public RoomPositions(Vector3 coord, int id)
 	{
 		RoomCoord = coord;
 		RoomID = id;
+		Visited = false;
 	}
 }
