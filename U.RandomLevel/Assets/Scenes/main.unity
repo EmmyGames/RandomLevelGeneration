@@ -338,7 +338,7 @@ MonoBehaviour:
   - {fileID: 5701231244371456228, guid: a95e7be6f3de7d142a909fda4be24b3d, type: 3}
   roomWidth: 10.5
   roomLength: 10.5
-  numRooms: 20
+  numRooms: 64
 --- !u!4 &1863105348
 Transform:
   m_ObjectHideFlags: 0
