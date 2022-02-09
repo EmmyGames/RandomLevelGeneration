@@ -168,14 +168,6 @@ public class LevelGenerator : MonoBehaviour
 		return room;
 	}
 
-	private void PrintArray()
-	{
-		foreach (var t in _roomCoordinates)
-		{
-			Debug.Log(t.RoomCoord + "\n");
-		}
-	}
-
 	private void AddNewSpawnCoords(int room, Vector2 mod)
 	{
 		var coord = new Vector3(_roomCoordinates[room].RoomCoord.x + mod.x, _roomCoordinates[room].RoomCoord.y,
@@ -248,7 +240,7 @@ public class LevelGenerator : MonoBehaviour
 public class RoomPositions
 {
 	public Vector3 RoomCoord;
-	public int RoomID;
+	public readonly int RoomID;
 	public bool Visited;
 
 	public RoomPositions(Vector3 coord, int id)
