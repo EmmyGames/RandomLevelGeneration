@@ -2,139 +2,218 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
+/// <summary>
+/// Generates a procedurally generated roguelike-dungeon made from various room prefabs.
+/// </summary>
 public class LevelGenerator : MonoBehaviour
 {
-	public bool showDebug;
-	public GameObject[] rooms;
-	public float roomWidth;
-	public float roomLength;
+	[Tooltip("Number of rooms that need to be spawned, not counting the spawn room."), Range(0, 200)] 
 	public int numRooms;
-	private readonly List<RoomPositions> _roomCoordinates = new();
-	private readonly List<Vector3> _spawnCoordinates = new();
-	private int[,] _data;
+	[Tooltip("List of room prefabs. Put the spawn room first in the list and add at least one other room.")]
+	public GameObject[] rooms;
+	[Tooltip("The width of the room prefabs."), Range(5, 200)]
+	public float roomWidth;
+	[Tooltip("The length of the room prefabs."), Range(5, 200)]
+	public float roomLength;
 
-	private MazeDataGenerator _dataGenerator;
-	private int _maxX;
-	private int _maxZ;
+	private readonly List<Room> _roomPositions = new();
+	private readonly List<Vector3> _nextLocationCandidates = new();
+	private int[,] _level;
+	private int _maxX, _maxZ, _minX, _minZ;
 
-	private int _minX;
-	private int _minZ;
-
-	private void Awake() => _dataGenerator = new MazeDataGenerator();
 	private void Start()
 	{
-		// add (0, 0) to room coordinates
-		var spawn = new RoomPositions(Vector3.zero, 0);
-		spawn.Visited = true;
-		_roomCoordinates.Add(spawn);
-
-		for (var i = 0; i < numRooms; i++)
+		if (rooms.Length == 0)
 		{
-			//add spawn coordinates based on room coordinates
-			AddNewSpawnCoords(_roomCoordinates.Count - 1, new Vector2(1, 0));
-			AddNewSpawnCoords(_roomCoordinates.Count - 1, new Vector2(-1, 0));
-			AddNewSpawnCoords(_roomCoordinates.Count - 1, new Vector2(0, 1));
-			AddNewSpawnCoords(_roomCoordinates.Count - 1, new Vector2(0, -1));
-			//pick one randomly
-			var roomLocation = _spawnCoordinates[Random.Range(0, _spawnCoordinates.Count)];
-			//pick room randomly
-			var room = Random.Range(1, rooms.Length);
-
-			//remove picked coord from spawn coordinates
-			bool isFound;
-			do
-			{
-				isFound = _spawnCoordinates.Remove(roomLocation);
-			} while (isFound);
-
-			//add it to room coordinates
-			var roomPos = new RoomPositions(roomLocation, room);
-			_roomCoordinates.Add(roomPos);
+			Debug.LogWarning("Please add prefabs to the rooms list in LevelGenerator");
+			return;
 		}
-		_roomCoordinates.Sort((x, y) =>
-			(Mathf.Abs(x.RoomCoord.x) + Mathf.Abs(x.RoomCoord.z)).CompareTo(Mathf.Abs(y.RoomCoord.x) +
-																			Mathf.Abs(y.RoomCoord.z)));
-		FindArraySize();
-		MakeRoomArray();
+		GenerateLevel();
+	}
+	
+	/// <summary>
+	/// Adds the spawn locations adjacent to the most recently added room position.
+	/// </summary>
+	private void AddCandidates()
+	{
+		var mods = new List<Vector2> { Vector2.left, Vector2.right, Vector2.up, Vector2.down };
+		for (var i = 0; i < mods.Count; i++)
+		{
+			var coord = new Vector3(_roomPositions[^1].RoomCoord.x + mods[i].x, _roomPositions[^1].RoomCoord.y,
+				_roomPositions[^1].RoomCoord.z + mods[i].y);
+			for (var j = 0; j < _roomPositions.Count; j++)
+			{
+				if (coord == _roomPositions[j].RoomCoord)
+					break;
+				if (j == _roomPositions.Count - 1)
+					_nextLocationCandidates.Add(coord);
+			}
+		}
+	}
+	
+	/// <summary>
+	/// Finds the path to spawn for every room in the room in the level.
+	/// </summary>
+	private void ConnectRooms()
+	{
+		foreach (var room in _roomPositions.Where(r => !r.Visited))
+		{
+			// Calculate the position of the room in the Room Array
+			PathToSpawn(room);
+		}
+	}
+	
+	/// <summary>
+	/// Helper method to convert a location in the Level array to its corresponding world position.
+	/// This does not take into account room length and width until initialization.
+	/// </summary>
+	private Vector3 ConvertToRoom(int row, int col)
+	{
+		var xPos = (float)((col - 1) / 2 + _minX);
+		var zPos = (float)((row - 1) / 2 + _minZ);
+		var position = new Vector3(xPos, 0f, zPos);
+		return position;
+	}
+	
+	/// <summary>
+	/// Finds the bounds of the level by determining the minimum and maximum x and z coordinates.
+	/// </summary>
+	private void FindLevelBounds()
+	{
+		foreach (var t in _roomPositions)
+		{
+			if (t.RoomCoord.x < _minX)
+				_minX = (int)t.RoomCoord.x;
+			if (t.RoomCoord.x > _maxX)
+				_maxX = (int)t.RoomCoord.x;
+			if (t.RoomCoord.z < _minZ)
+				_minZ = (int)t.RoomCoord.z;
+			if (t.RoomCoord.z > _maxZ)
+				_maxZ = (int)t.RoomCoord.z;
+		}
+	}
+	
+	/// <summary>
+	/// Helper method to convert a location in the Level array to its corresponding room object
+	/// in the room array.
+	/// </summary>
+
+	private Room FindRoomInLevel(int row, int col)
+	{
+		var pos = ConvertToRoom(row, col);
+		var room = _roomPositions.Find(m => m.RoomCoord == pos);
+		return room;
+	}
+
+	/// <summary>
+	/// Generates a procedurally generated roguelike-dungeon made from various room prefabs.
+	/// </summary>
+	private void GenerateLevel()
+	{
+		PopulateRoomList();
+		FindLevelBounds();
+		MakeLevelArray();
 		ConnectRooms();
 		InstantiateRooms();
 	}
-
-	private void OnGUI()
+	
+	/// <summary>
+	/// Instantiates the rooms based on the _level array.
+	/// </summary>
+	private void InstantiateRooms()
 	{
-		if (!showDebug) return;
-
-		var maze = _data;
-		var rMax = maze.GetUpperBound(0);
-		var cMax = maze.GetUpperBound(1);
-
-		var message = "";
-
-		for (var i = rMax; i >= 0; i--)
+		var parent = new GameObject("Rooms");
+		for (var i = 0; i <= _level.GetUpperBound(0); i++)
 		{
-			for (var j = 0; j <= cMax; j++)
+			for (var j = 0; j <= _level.GetUpperBound(1); j++)
 			{
-				if (maze[i, j] != 0)
-					message += "....";
-				else
-					message += "==";
-				//message += data [i, j];
+				if (_level[i, j] <= 0) continue;
+				var roomGO = rooms[_level[i, j] - 1];
+				var pos = ConvertToRoom(i, j);
+				pos.x *= roomLength;
+				pos.z *= roomWidth;
+				var room = Instantiate(roomGO, pos, Quaternion.identity, parent.transform);
+				OpenDoors(room, i, j);
 			}
-			message += "\n";
 		}
-		GUI.Label(new Rect(20, 20, 500, 500), message);
 	}
 
-	private void ConnectRooms()
+	/// <summary>
+	/// The _level array is an int[,] that places all the rooms from _roomPositions. The room value represents their
+	/// index in the rooms array to keep track of its prefab. Spaces are left in between rooms to keep track of walls
+	/// or open space between rooms. 0s are the default and are walls. Some of these change to -1s (spaces) during
+	/// pathfinding to spawn.
+	/// </summary>
+	private void MakeLevelArray()
 	{
-		foreach (var r in _roomCoordinates.Where(r => !r.Visited))
+		_level = new int[2 * (_maxZ - _minZ + 1) + 1, 2 * (_maxX - _minX + 1) + 1];
+		foreach (var t in _roomPositions)
 		{
-			// Calculate the position of the room in the Room Array
-			VisitRooms(r);
+			var x = 2 * ((int)t.RoomCoord.x - _minX) + 1;
+			var z = 2 * ((int)t.RoomCoord.z - _minZ) + 1;
+			_level[z, x] = t.RoomID + 1;
 		}
 	}
-
-	private void VisitRooms(RoomPositions r)
+	
+	/// <summary>
+	/// Checks adjacent indexes in the _level array to determine if there should be walls or doorways.
+	/// </summary>
+	private void OpenDoors(GameObject room, int i, int j)
+	{
+		var n = _level[i + 1, j] == -1;
+		var e = _level[i, j + 1] == -1;
+		var s = _level[i - 1, j] == -1;
+		var w = _level[i, j - 1] == -1;
+		var doors = room.GetComponent<Doors>();
+		if (n) doors.doorsNESW[0].gameObject.SetActive(false);
+		if (e) doors.doorsNESW[1].gameObject.SetActive(false);
+		if (s) doors.doorsNESW[2].gameObject.SetActive(false);
+		if (w) doors.doorsNESW[3].gameObject.SetActive(false);
+	}
+	
+	/// <summary>
+	/// Makes a path from r to spawn by visiting adjacent rooms until it encounters a visited room. It then
+	/// changes all the rooms that were moved through to be visited as well.
+	/// </summary>
+	private void PathToSpawn(Room r)
 	{
 		// Make an empty list of visited rooms to be filled each iteration.
-		var visitedRooms = new List<RoomPositions>();
-		visitedRooms.Add(r);
-		
-		// Get the row and col equivalent in the level array
+		var visitedRooms = new List<Room> { r };
+
+		// Get the row and column equivalent in the level array
 		var row = 2 * ((int)r.RoomCoord.z - _minZ) + 1;
 		var col = 2 * ((int)r.RoomCoord.x - _minX) + 1;
-		
-		// Make a list of the next possible positions to visit.
-		var nextSpots = new List<Vector2>{ Vector2.left, Vector2.right, Vector2.up, Vector2.down };
-		// Make a copy of that list to remove invalid items and improve performance.
-		var nextSpotsCopy = nextSpots;
 		
 		var isVisited = false;
 		while (!isVisited)
 		{
+			// Make a list of the next possible positions to visit.
+			var nextSpots = new List<Vector2> { Vector2.left, Vector2.right, Vector2.up, Vector2.down };
 			var isInBounds = false;
 			while (!isInBounds)
 			{
-				var nextSpot = 2 * nextSpotsCopy[Random.Range(0, nextSpots.Count)];
-				if (row + (int)nextSpot.x < 0 || row + (int)nextSpot.x > _data.GetUpperBound(0))
+				var nextSpot = 2 * nextSpots[Random.Range(0, nextSpots.Count)];
+				
+				// If the next spot is out of bounds, it is not a valid spot.
+				if (row + (int)nextSpot.x < 0 || row + (int)nextSpot.x > _level.GetUpperBound(0))
 				{
-					nextSpotsCopy.Remove(nextSpot);
+					nextSpots.Remove(nextSpot);
 					continue;
 				}
-
-				if (col + (int)nextSpot.y < 0 || col + (int)nextSpot.y > _data.GetUpperBound(1))
+				if (col + (int)nextSpot.y < 0 || col + (int)nextSpot.y > _level.GetUpperBound(1))
 				{
-					nextSpotsCopy.Remove(nextSpot);
+					nextSpots.Remove(nextSpot);
 					continue;
 				}
+				
 				var nextRow = row + (int)nextSpot.x;
 				var nextCol = col + (int)nextSpot.y;
 				// If we found a room.
-				if (_data[nextRow, nextCol] != 0)
+				if (_level[nextRow, nextCol] > 0)
 				{
-					// Open Door
-					_data[row + (int)nextSpot.x / 2, col + (int)nextSpot.y / 2] = -1;
-					var room = ConvertToRoom(nextRow, nextCol);
+					// Make the space in the middle an open space.
+					_level[row + (int)nextSpot.x / 2, col + (int)nextSpot.y / 2] = -1;
+					var room = FindRoomInLevel(nextRow, nextCol);
 					// If the room hasn't already been visited this iteration, add it to the list.
 					if (visitedRooms.Find(x => x.RoomCoord == room.RoomCoord) == null) visitedRooms.Add(room);
 					// Update the selected row and column.
@@ -148,7 +227,7 @@ public class LevelGenerator : MonoBehaviour
 				// If we didn't find a room, it is not a valid spot
 				else
 				{
-					nextSpotsCopy.Remove(nextSpot);
+					nextSpots.Remove(nextSpot);
 				}
 			}
 		}
@@ -157,96 +236,44 @@ public class LevelGenerator : MonoBehaviour
 			v.Visited = true;
 		}
 	}
-
-	private RoomPositions ConvertToRoom(int row, int col)
+	
+	/// <summary>
+	/// Determines the layout of rooms and adds them to an array to be used later.
+	/// </summary>
+	private void PopulateRoomList()
 	{
-		var xPos = (float)((col - 1) / 2 + _minX);
-		var zPos = (float)((row - 1) / 2 + _minZ);
-		var pos = new Vector3(xPos, 0f, zPos);
-
-		var room = _roomCoordinates.Find(x => x.RoomCoord == pos);
-		return room;
-	}
-
-	private void AddNewSpawnCoords(int room, Vector2 mod)
-	{
-		var coord = new Vector3(_roomCoordinates[room].RoomCoord.x + mod.x, _roomCoordinates[room].RoomCoord.y,
-			_roomCoordinates[room].RoomCoord.z + mod.y);
-		for (var k = 0; k < _roomCoordinates.Count; k++)
+		// Add the spawn room.
+		var spawn = new Room(Vector3.zero, 0)
 		{
-			if (coord == _roomCoordinates[k].RoomCoord)
-				return;
-			if (k == _roomCoordinates.Count - 1)
-				_spawnCoordinates.Add(coord);
-		}
-	}
-	private void FindArraySize()
-	{
-		foreach (var t in _roomCoordinates)
-		{
-			if (t.RoomCoord.x < _minX)
-				_minX = (int)t.RoomCoord.x;
-			if (t.RoomCoord.x > _maxX)
-				_maxX = (int)t.RoomCoord.x;
-			if (t.RoomCoord.z < _minZ)
-				_minZ = (int)t.RoomCoord.z;
-			if (t.RoomCoord.z > _maxZ)
-				_maxZ = (int)t.RoomCoord.z;
-		}
-	}
+			Visited = true
+		};
+		_roomPositions.Add(spawn);
 
-	private void MakeRoomArray()
-	{
-		_data = new int[2 * (_maxZ - _minZ + 1) + 1, 2 * (_maxX - _minX + 1) + 1];
-		for (var i = 0; i < _roomCoordinates.Count; i++)
+		for (var i = 0; i < numRooms; i++)
 		{
-			var x = 2 * ((int)_roomCoordinates[i].RoomCoord.x - _minX) + 1;
-			var z = 2 * ((int)_roomCoordinates[i].RoomCoord.z - _minZ) + 1;
-			_data[z, x] = _roomCoordinates[i].RoomID + 1;
-		}
-	}
+			// Add next location candidates based on room coordinates.
+			AddCandidates();
+			// Pick a spawn location.
+			var roomLocation = _nextLocationCandidates[Random.Range(0, _nextLocationCandidates.Count)];
+			// Pick a room.
+			var room = Random.Range(1, rooms.Length);
+			if (rooms.Length == 1)
+				room = 0;
 
-	private void InstantiateRooms()
-	{
-		for (var i = 0; i <= _data.GetUpperBound(0); i++)
-		{
-			for (var j = 0; j <= _data.GetUpperBound(1); j++)
+			// Remove picked coord from spawn coordinates and account for multiple entries.
+			bool isFound;
+			do
 			{
-				if (_data[i, j] <= 0) continue;
-				var xPos = ((j - 1) / 2 + _minX) * roomLength;
-				var zPos = ((i - 1) / 2 + _minZ) * roomWidth;
-				var roomGO = rooms[_data[i, j] - 1];
-				var room = Instantiate(roomGO, new Vector3(xPos, 0, zPos), Quaternion.identity);
-				OpenDoors(room, i, j);
-			}
+				isFound = _nextLocationCandidates.Remove(roomLocation);
+			} while (isFound);
+
+			//add it to room coordinates
+			var roomPos = new Room(roomLocation, room);
+			_roomPositions.Add(roomPos);
 		}
-	}
-
-	private void OpenDoors(GameObject room, int i, int j)
-	{
-		// Changed "open" areas to be -1, and walls are 0
-		var n = _data[i + 1, j] == -1;
-		var e = _data[i, j + 1] == -1;
-		var s = _data[i - 1, j] == -1;
-		var w = _data[i, j - 1] == -1;
-		var doors = room.GetComponent<Room>();
-		if (n) doors.doorsNESW[0].gameObject.SetActive(false);
-		if (e) doors.doorsNESW[1].gameObject.SetActive(false);
-		if (s) doors.doorsNESW[2].gameObject.SetActive(false);
-		if (w) doors.doorsNESW[3].gameObject.SetActive(false);
-	}
-}
-
-public class RoomPositions
-{
-	public Vector3 RoomCoord;
-	public readonly int RoomID;
-	public bool Visited;
-
-	public RoomPositions(Vector3 coord, int id)
-	{
-		RoomCoord = coord;
-		RoomID = id;
-		Visited = false;
+		// Sort rooms by distance from the spawn room ascending.
+		_roomPositions.Sort((x, y) =>
+			(Mathf.Abs(x.RoomCoord.x) + Mathf.Abs(x.RoomCoord.z)).CompareTo(Mathf.Abs(y.RoomCoord.x) +
+																			Mathf.Abs(y.RoomCoord.z)));
 	}
 }

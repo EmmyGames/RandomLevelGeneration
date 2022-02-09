@@ -1,6 +1,15 @@
-using UnityEngine;
+﻿using UnityEngine;
 
-public class Room : MonoBehaviour
+public class Room
 {
-	public GameObject[] doorsNESW;
+	public readonly int RoomID;
+	public Vector3 RoomCoord;
+	public bool Visited;
+
+	public Room(Vector3 coord, int id)
+	{
+		RoomCoord = coord;
+		RoomID = id;
+		Visited = false;
+	}
 }

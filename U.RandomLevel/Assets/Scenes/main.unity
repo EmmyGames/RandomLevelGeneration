@@ -312,7 +312,7 @@ GameObject:
   - component: {fileID: 1863105348}
   - component: {fileID: 1863105347}
   m_Layer: 0
-  m_Name: LevelGenerator
+  m_Name: '@LevelGenerator'
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -330,7 +330,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 03024e6bd6d71f6428a0c8e6f72b2fcf, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  showDebug: 1
+  numRooms: 36
   rooms:
   - {fileID: 4429631162207567861, guid: bb107548a51dacc459a9143329232493, type: 3}
   - {fileID: 6279503656953593882, guid: be17a84627b4d264bb474a35ea3370da, type: 3}
@@ -338,7 +338,6 @@ MonoBehaviour:
   - {fileID: 5701231244371456228, guid: a95e7be6f3de7d142a909fda4be24b3d, type: 3}
   roomWidth: 10.5
   roomLength: 10.5
-  numRooms: 32
 --- !u!4 &1863105348
 Transform:
   m_ObjectHideFlags: 0
